@@ -1,0 +1,125 @@
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "3.57.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = "us-east-1"
+}
+
+data "aws_availability_zones" "available" {}
+
+resource "aws_vpc" "main" {
+  cidr_block = "10.0.0.0/16"
+}
+
+resource "aws_subnet" "public" {
+  vpc_id     = aws_vpc.main.id
+  cidr_block = "10.0.1.0/24"
+  availability_zone = data.aws_availability_zones.available.names[0]
+}
+
+resource "aws_subnet" "private" {
+  vpc_id     = aws_vpc.main.id
+  cidr_block = "10.0.2.0/24"
+  availability_zone = data.aws_availability_zones.available.names[1]
+}
+
+resource "aws_internet_gateway" "igw" {
+  vpc_id = aws_vpc.main.id
+}
+
+resource "aws_nat_gateway" "nat" {
+  allocation_id = aws_eip.eip_nat.id
+  subnet_id     = aws_subnet.public.id
+}
+
+resource "aws_eip" "eip_nat" {
+  vpc = true
+}
+
+resource "aws_security_group" "alb_sg" {
+  name        = "alb_sg"
+  description = "Allow inbound traffic"
+  vpc_id      = aws_vpc.main.id
+}
+
+resource "aws_lb" "alb" {
+  name               = "foodie-alb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb_sg.id]
+
+  subnets = [
+    aws_subnet.public.id,
+    aws_subnet.private.id,
+  ]
+
+  enable_deletion_protection = false
+}
+
+resource "aws_instance" "app_server" {
+  ami           = "ami-0889a44b331db0194"
+  instance_type = "t2.micro"
+
+  tags = {
+    Name = "ExampleAppServerInstance"
+  }
+}
+
+resource "aws_dynamodb_table" "example_table" {
+  name           = "foodie-customers-table"
+  billing_mode   = "PROVISIONED"
+  read_capacity  = 25
+  write_capacity = 25
+  hash_key       = "UserID"
+  range_key      = "RecommendationID"
+
+  attribute {
+    name = "UserID"
+    type = "S"
+  }
+
+  attribute {
+    name = "RecommendationID"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "TimeToExist"
+    enabled        = false
+  }
+
+  tags = {
+    Name        = "dynamodb-table-foodie"
+    Environment = "production"
+  }
+}
+
+resource "aws_security_group" "web_server_sg" {
+  name        = "FoodieSecurityGroup"
+  description = "Security group for web server"
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name        = "FoodieSecurityGroup"
+    Environment = "production"
+ }
+}
